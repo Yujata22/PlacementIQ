@@ -21,7 +21,9 @@ from backend.models_inventory import (
 from backend.optimizer.placement_optimizer import (
     optimize_container_placement,
 )
-
+from backend.agents.planner_agent import (
+    answer_network_summary,
+)
 skus = [
     SKU(
         sku_id="SKU_A123",
@@ -386,50 +388,70 @@ def get_inventory_coverage():
 
 @app.post("/optimize-placement")
 def optimize_placement():
+    """Run the inventory-aware container placement optimizer."""
     containers_input = [
         {
             "container_id": "CONT001",
             "origin_port": "USLAX",
-            "total_units": 5000,
+            "total_units": 800,
+            "sku_units": {
+                "SKU_A123": 500,
+                "SKU_B456": 300,
+            },
         },
         {
             "container_id": "CONT002",
-            "origin_port": "USLAX",
-            "total_units": 7000,
-        },
-        {
-            "container_id": "CONT003",
             "origin_port": "USOAK",
-            "total_units": 6000,
+            "total_units": 400,
+            "sku_units": {
+                "SKU_C789": 400,
+            },
         },
     ]
 
     fulfillment_centers_input = [
         {
-            "fc_code": "FC_SOCAL",
-            "available_capacity_units": 10000,
-        },
-        {
-            "fc_code": "FC_PHOENIX",
-            "available_capacity_units": 9000,
-        },
-        {
-            "fc_code": "FC_DALLAS",
-            "available_capacity_units": 12000,
-        },
+            "fc_code": fc.fc_code,
+            "available_capacity_units": (
+                fc.max_capacity_units - fc.current_capacity_units
+            ),
+        }
+        for fc in fulfillment_centers
     ]
 
-    lane_costs_input = {
-        ("USLAX", "FC_SOCAL"): 1500,
-        ("USLAX", "FC_PHOENIX"): 1800,
-        ("USLAX", "FC_DALLAS"): 2300,
-        ("USOAK", "FC_SOCAL"): 1900,
-        ("USOAK", "FC_PHOENIX"): 2100,
-        ("USOAK", "FC_DALLAS"): 2500,
-    }
+    lane_costs_input = [
+        {
+            "origin_port": lane.origin_port,
+            "destination_fc": lane.destination_fc,
+            "service_level": lane.service_level,
+            "base_cost": lane.base_cost,
+            "fuel_surcharge": lane.fuel_surcharge,
+            "accessorial_cost": lane.accessorial_cost,
+            "service_level_premium": lane.service_level_premium,
+            "transit_days": lane.transit_days,
+        }
+        for lane in lane_costs
+    ]
+
+    inventory_coverage_input = [
+        {
+            "fc_code": record.fc_code,
+            "sku_id": record.sku_id,
+            "days_of_cover": record.days_of_cover,
+        }
+        for record in get_inventory_coverage()
+    ]
 
     return optimize_container_placement(
         containers=containers_input,
         fulfillment_centers=fulfillment_centers_input,
         lane_costs=lane_costs_input,
+        inventory_coverage=inventory_coverage_input,
     )
+
+@app.get("/agent/network-summary")
+def agent_network_summary():
+
+    return {
+        "answer": answer_network_summary()
+    }
