@@ -1,15 +1,21 @@
-# Python
+.venv/
 __pycache__/
 *.pyc
 
-# Virtual Environment
-.venv/
+.env
+.env.*
 
-# Mac
-.DS_Store
+.streamlit/secrets.toml
 
-# IDE
+.idea/
 .vscode/
 
-# Logs
+.DS_Store
+
 *.log
+
+dist/
+build/
+
+.coverage
+.pytest_cache/

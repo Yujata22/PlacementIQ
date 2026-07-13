@@ -497,8 +497,11 @@ with copilot_tab:
         with st.chat_message("assistant"):
             with st.spinner("PlacementIQ is analyzing the network..."):
                 try:
-                    response = requests.get(
-                        f"{API_BASE_URL}/agent/network-summary",
+                    response = requests.post(
+                        f"{API_BASE_URL}/agent/chat",
+                        json={
+                            "question": planner_question,
+                        },
                         timeout=180,
                     )
                     response.raise_for_status()
@@ -507,6 +510,10 @@ with copilot_tab:
                     answer = payload.get(
                         "answer",
                         "The agent returned an empty response.",
+                    )
+                    intent = payload.get(
+                        "intent",
+                        "unknown",
                     )
 
                 except requests.exceptions.ConnectionError:
@@ -523,6 +530,11 @@ with copilot_tab:
 
                 except requests.exceptions.RequestException as exc:
                     answer = f"The planning agent failed: {exc}"
+
+                if "intent" in locals():
+                    st.caption(
+                        f"Planning tool selected: `{intent}`"
+                    )
 
                 st.write(answer)
 

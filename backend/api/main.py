@@ -3,27 +3,39 @@ from typing import Literal
 
 from fastapi import FastAPI
 
+from backend.agents.planner_agent import answer_planning_question
+from backend.agents.schemas import AgentChatRequest
 from backend.models import (
     Container,
     ContainerEvent,
     FulfillmentCenter,
     LaneCost,
 )
-
-# from backend.models_inventory import SKU, ContainerSKU
 from backend.models_inventory import (
-    SKU,
     ContainerSKU,
     FCInventory,
     InventoryCoverage,
+    SKU,
 )
-
 from backend.optimizer.placement_optimizer import (
     optimize_container_placement,
 )
-from backend.agents.planner_agent import (
-    answer_network_summary,
+
+
+app = FastAPI(
+    title="PlacementIQ API",
+    description=(
+        "Inbound container placement and service-level "
+        "optimization platform."
+    ),
+    version="0.1.0",
 )
+
+
+# ------------------------------------------------------------------
+# Sample master data
+# ------------------------------------------------------------------
+
 skus = [
     SKU(
         sku_id="SKU_A123",
@@ -48,6 +60,7 @@ skus = [
     ),
 ]
 
+
 container_skus = [
     ContainerSKU(
         container_id="CONT001",
@@ -65,6 +78,8 @@ container_skus = [
         units=400,
     ),
 ]
+
+
 fc_inventory = [
     FCInventory(
         fc_code="FC_SOCAL",
@@ -82,11 +97,6 @@ fc_inventory = [
         on_hand_units=1200,
     ),
 ]
-app = FastAPI(
-    title="PlacementIQ API",
-    description="Inbound container placement and service-level optimization platform.",
-    version="0.1.0",
-)
 
 
 containers = [
@@ -278,6 +288,10 @@ lane_costs = [
 ]
 
 
+# ------------------------------------------------------------------
+# Health and network endpoints
+# ------------------------------------------------------------------
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -338,23 +352,36 @@ def get_lane_costs_by_port(
     ]
 
 
+# ------------------------------------------------------------------
+# Inventory endpoints
+# ------------------------------------------------------------------
+
 @app.get("/skus", response_model=list[SKU])
-def get_skus():
+def get_skus() -> list[SKU]:
     return skus
 
-@app.get("/container-skus", response_model=list[ContainerSKU])
-def get_container_skus():
+
+@app.get(
+    "/container-skus",
+    response_model=list[ContainerSKU],
+)
+def get_container_skus() -> list[ContainerSKU]:
     return container_skus
 
-@app.get("/inventory", response_model=list[FCInventory])
-def get_inventory():
+
+@app.get(
+    "/inventory",
+    response_model=list[FCInventory],
+)
+def get_inventory() -> list[FCInventory]:
     return fc_inventory
+
 
 @app.get(
     "/inventory/coverage",
     response_model=list[InventoryCoverage],
 )
-def get_inventory_coverage():
+def get_inventory_coverage() -> list[InventoryCoverage]:
     sku_demand_lookup = {
         sku.sku_id: sku.daily_demand_units
         for sku in skus
@@ -386,14 +413,17 @@ def get_inventory_coverage():
 
     return coverage
 
-@app.post("/optimize-placement")
-def optimize_placement():
-    """Run the inventory-aware container placement optimizer."""
+
+# ------------------------------------------------------------------
+# Optimizer input preparation
+# ------------------------------------------------------------------
+
+def build_optimizer_inputs():
     containers_input = [
         {
             "container_id": "CONT001",
             "origin_port": "USLAX",
-            "total_units": 800,
+            "total_units": 5000,
             "sku_units": {
                 "SKU_A123": 500,
                 "SKU_B456": 300,
@@ -402,7 +432,7 @@ def optimize_placement():
         {
             "container_id": "CONT002",
             "origin_port": "USOAK",
-            "total_units": 400,
+            "total_units": 6000,
             "sku_units": {
                 "SKU_C789": 400,
             },
@@ -411,12 +441,13 @@ def optimize_placement():
 
     fulfillment_centers_input = [
         {
-            "fc_code": fc.fc_code,
+            "fc_code": center.fc_code,
             "available_capacity_units": (
-                fc.max_capacity_units - fc.current_capacity_units
+                center.max_capacity_units
+                - center.current_capacity_units
             ),
         }
-        for fc in fulfillment_centers
+        for center in fulfillment_centers
     ]
 
     lane_costs_input = [
@@ -428,19 +459,35 @@ def optimize_placement():
             "fuel_surcharge": lane.fuel_surcharge,
             "accessorial_cost": lane.accessorial_cost,
             "service_level_premium": lane.service_level_premium,
-            "transit_days": lane.transit_days,
         }
         for lane in lane_costs
     ]
 
     inventory_coverage_input = [
-        {
-            "fc_code": record.fc_code,
-            "sku_id": record.sku_id,
-            "days_of_cover": record.days_of_cover,
-        }
-        for record in get_inventory_coverage()
+        coverage.model_dump()
+        for coverage in get_inventory_coverage()
     ]
+
+    return (
+        containers_input,
+        fulfillment_centers_input,
+        lane_costs_input,
+        inventory_coverage_input,
+    )
+
+
+# ------------------------------------------------------------------
+# Optimization endpoint
+# ------------------------------------------------------------------
+
+@app.post("/optimize-placement")
+def optimize_placement():
+    (
+        containers_input,
+        fulfillment_centers_input,
+        lane_costs_input,
+        inventory_coverage_input,
+    ) = build_optimizer_inputs()
 
     return optimize_container_placement(
         containers=containers_input,
@@ -449,9 +496,37 @@ def optimize_placement():
         inventory_coverage=inventory_coverage_input,
     )
 
-@app.get("/agent/network-summary")
-def agent_network_summary():
 
-    return {
-        "answer": answer_network_summary()
-    }
+# ------------------------------------------------------------------
+# Agentic planning endpoint
+# ------------------------------------------------------------------
+
+@app.post("/agent/chat")
+def agent_chat(request: AgentChatRequest):
+    (
+        containers_input,
+        fulfillment_centers_input,
+        lane_costs_input,
+        inventory_coverage_input,
+    ) = build_optimizer_inputs()
+
+    optimization_result = optimize_container_placement(
+        containers=containers_input,
+        fulfillment_centers=fulfillment_centers_input,
+        lane_costs=lane_costs_input,
+        inventory_coverage=inventory_coverage_input,
+    )
+
+    container_skus_input = [
+        record.model_dump()
+        for record in container_skus
+    ]
+
+    return answer_planning_question(
+        question=request.question,
+        containers=containers_input,
+        fulfillment_centers=fulfillment_centers_input,
+        inventory_coverage=inventory_coverage_input,
+        container_skus=container_skus_input,
+        optimization_result=optimization_result,
+    )
