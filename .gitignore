@@ -1,6 +1,15 @@
-.venv/
+# Python
 __pycache__/
 *.pyc
-.env
+
+# Virtual Environment
+.venv/
+
+# Mac
 .DS_Store
-.pytest_cache/
+
+# IDE
+.vscode/
+
+# Logs
+*.log
